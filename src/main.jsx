@@ -469,7 +469,10 @@ function App() {
     <div className="app-shell">
       <aside className="sidebar">
         <Logo />
-        <nav>{nav.map(([id, Icon, label]) => <button key={id} className={view === id ? "active" : ""} onClick={() => setView(id)}><Icon size={19} /><span>{label}</span></button>)}</nav>
+        <nav>
+          {nav.map(([id, Icon, label]) => <button key={id} className={view === id ? "active" : ""} onClick={() => setView(id)}><Icon size={19} /><span>{label}</span></button>)}
+          <button className={`mobile-settings ${view === "settings" ? "active" : ""}`} onClick={() => setView("settings")}><Settings size={19} /><span>Settings</span></button>
+        </nav>
         <div className="sidebar-bottom"><button className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}><Settings size={19} /><span>Settings</span></button><div className="user-card"><div className="user-avatar">TP</div><div><strong>Tracy Pham</strong><span>Personal portfolio</span></div><MoreHorizontal size={18} /></div></div>
       </aside>
       <div className="main-area">
