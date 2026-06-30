@@ -138,10 +138,10 @@ function Avatar({ ticker, color, small = false }) {
 }
 
 function AuthButton({ user, loading, cloudState, onSignIn, onSignOut, onOpenSettings }) {
-  if (loading) return <button className="auth-button" disabled><RefreshCw className="spinning" size={17} /><span>Connecting</span></button>;
+  if (loading) return <button className="auth-button" aria-label="Connecting to cloud" title="Connecting to cloud" disabled><RefreshCw className="spinning" size={17} /><span>Connecting</span></button>;
   if (user) {
     return (
-      <button className="auth-button signed-in" onClick={onSignOut} title="Sign out">
+      <button className="auth-button signed-in" aria-label={`Signed in as ${user.displayName || user.email}. Sign out`} onClick={onSignOut} title="Sign out">
         {user.photoURL ? <img src={user.photoURL} alt="" referrerPolicy="no-referrer" /> : <Cloud size={17} />}
         <span>{cloudState.status === "synced" ? "Synced" : user.displayName?.split(" ")[0] || "Account"}</span>
         <LogOut size={14} />
@@ -149,7 +149,7 @@ function AuthButton({ user, loading, cloudState, onSignIn, onSignOut, onOpenSett
     );
   }
   return (
-    <button className="auth-button" onClick={firebaseConfigured ? onSignIn : onOpenSettings}>
+    <button className="auth-button" aria-label={firebaseConfigured ? "Sign in with Google" : "Set up login"} title={firebaseConfigured ? "Sign in with Google" : "Set up login"} onClick={firebaseConfigured ? onSignIn : onOpenSettings}>
       <LogIn size={17} /><span>{firebaseConfigured ? "Sign in with Google" : "Set up login"}</span>
     </button>
   );
