@@ -213,7 +213,7 @@ function HoldingModal({ holding, onClose, onSave }) {
           <label>Shares<input type="number" min="0" step="0.01" value={form.shares} onChange={(e) => update("shares", e.target.value)} /></label>
           <label>Current price<input type="number" min="0" step="0.01" value={form.price} onChange={(e) => update("price", e.target.value)} /></label>
           <label>Average cost<input type="number" min="0" step="0.01" value={form.avgCost} onChange={(e) => update("avgCost", e.target.value)} /></label>
-          <label>Dividend / share<input type="number" min="0" step="0.01" value={form.dividend} onChange={(e) => update("dividend", e.target.value)} /></label>
+          <label>Dividend / share<input type="number" min="0" step="0.0001" value={form.dividend} onChange={(e) => update("dividend", e.target.value)} /></label>
           <label>WHT rate (%)<input type="number" min="0" max="100" step="0.01" value={form.whtRate} onChange={(e) => update("whtRate", e.target.value)} /></label>
           <label>Payments / year<select value={form.frequency} onChange={(e) => update("frequency", e.target.value)}><option value="12">Monthly</option><option value="4">Quarterly</option><option value="2">Semiannual</option><option value="1">Annual</option></select></label>
           <label>Sector<select value={form.sector} onChange={(e) => update("sector", e.target.value)}><option>Technology</option><option>Healthcare</option><option>Consumer Staples</option><option>Communication</option><option>Financials</option><option>Energy</option><option>Other</option></select></label>
