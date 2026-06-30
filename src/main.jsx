@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   ArrowDownRight,
@@ -10,10 +10,13 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleDollarSign,
+  Cloud,
   Database,
   Download,
   KeyRound,
   LayoutDashboard,
+  LogIn,
+  LogOut,
   MoreHorizontal,
   Moon,
   Pencil,
@@ -21,12 +24,21 @@ import {
   Plus,
   Search,
   Settings,
+  ShieldCheck,
   RefreshCw,
   Sun,
   Trash2,
   WalletCards,
   X,
 } from "lucide-react";
+import {
+  firebaseConfigured,
+  observeAuth,
+  savePortfolio,
+  signInWithGoogle,
+  signOutUser,
+  subscribeToPortfolio,
+} from "./firebase";
 import "./styles.css";
 
 const defaultHoldings = [
@@ -40,6 +52,7 @@ const STORAGE_KEY = "yieldfolio-holdings-v3";
 const API_KEY_STORAGE = "yieldfolio-alpha-vantage-api-key";
 const DIVIDEND_CACHE_KEY = "yieldfolio-dividend-cache";
 const THEME_STORAGE_KEY = "yieldfolio-theme";
+const CLIENT_ID_STORAGE_KEY = "yieldfolio-client-id";
 const DAY_MS = 24 * 60 * 60 * 1000;
 const providerSymbols = { QQQI: "QQQI", SPYI: "SPYI", JEPQ: "JEPQ.LON", JEPI: "JEPI.LON" };
 const distributionHistory = {
@@ -84,6 +97,14 @@ const applyWhtPolicy = (holdings) => holdings.map((holding) => ({
   whtVersion: 2,
 }));
 
+function getClientId() {
+  const existing = localStorage.getItem(CLIENT_ID_STORAGE_KEY);
+  if (existing) return existing;
+  const created = crypto.randomUUID();
+  localStorage.setItem(CLIENT_ID_STORAGE_KEY, created);
+  return created;
+}
+
 async function fetchDividendData(apiKey) {
   const entries = await Promise.all(Object.entries(providerSymbols).map(async ([ticker, symbol]) => {
     const response = await fetch(`https://www.alphavantage.co/query?function=DIVIDENDS&symbol=${encodeURIComponent(symbol)}&apikey=${encodeURIComponent(apiKey)}`);
@@ -114,6 +135,24 @@ function Logo() {
 
 function Avatar({ ticker, color, small = false }) {
   return <div className={`ticker-avatar ${small ? "small" : ""}`} style={{ background: color }}>{ticker.slice(0, 1)}</div>;
+}
+
+function AuthButton({ user, loading, cloudState, onSignIn, onSignOut, onOpenSettings }) {
+  if (loading) return <button className="auth-button" disabled><RefreshCw className="spinning" size={17} /><span>Connecting</span></button>;
+  if (user) {
+    return (
+      <button className="auth-button signed-in" onClick={onSignOut} title="Sign out">
+        {user.photoURL ? <img src={user.photoURL} alt="" referrerPolicy="no-referrer" /> : <Cloud size={17} />}
+        <span>{cloudState.status === "synced" ? "Synced" : user.displayName?.split(" ")[0] || "Account"}</span>
+        <LogOut size={14} />
+      </button>
+    );
+  }
+  return (
+    <button className="auth-button" onClick={firebaseConfigured ? onSignIn : onOpenSettings}>
+      <LogIn size={17} /><span>{firebaseConfigured ? "Sign in with Google" : "Set up login"}</span>
+    </button>
+  );
 }
 
 function StatCard({ label, value, detail, icon: Icon, accent = false, onClick, children }) {
@@ -366,12 +405,29 @@ function Calendar({ holdings }) {
   );
 }
 
-function DataSettings({ apiKey, syncState, lastSync, onConnect, onSync }) {
+function DataSettings({ apiKey, syncState, lastSync, onConnect, onSync, user, authLoading, cloudState, authError, onSignIn, onSignOut }) {
   const [draftKey, setDraftKey] = useState(apiKey);
   const connected = Boolean(apiKey);
   return (
     <>
-      <div className="page-heading"><div><div className="eyebrow">Settings</div><h1>Dividend data</h1><p>Keep declared amounts and calendar dates fresh automatically.</p></div></div>
+      <div className="page-heading"><div><div className="eyebrow">Settings</div><h1>Account & data</h1><p>Keep your portfolio private, synced, and available on every device.</p></div></div>
+      <section className="panel data-settings cloud-settings">
+        <div className="provider-heading">
+          <div className="provider-icon"><Cloud size={21} /></div>
+          <div><h2>Yieldfolio Cloud</h2><p>Google sign-in with private, per-user portfolio sync.</p></div>
+          <span className={`connection-badge ${user && cloudState.status !== "error" ? "connected" : ""}`}><i />{authLoading ? "Connecting" : user ? (cloudState.status === "syncing" ? "Syncing" : "Signed in") : firebaseConfigured ? "Signed out" : "Setup needed"}</span>
+        </div>
+        <div className="cloud-account-row">
+          <div className="cloud-security"><ShieldCheck size={22} /><div><strong>{user ? user.displayName || user.email : "Secure cross-device access"}</strong><span>{user ? user.email : "Your Google account controls access to your portfolio."}</span></div></div>
+          {user
+            ? <button className="button secondary" onClick={onSignOut}><LogOut size={17} />Sign out</button>
+            : <button className="button primary" onClick={onSignIn} disabled={!firebaseConfigured || authLoading}><LogIn size={17} />Continue with Google</button>}
+        </div>
+        {!firebaseConfigured && <div className="sync-message syncing">Firebase project configuration is required before Google sign-in can be enabled on the live site.</div>}
+        {authError && <div className="sync-message error">{authError}</div>}
+        {cloudState.message && <div className={`sync-message ${cloudState.status}`}>{cloudState.message}</div>}
+        <p className="data-note">Portfolio holdings, cached dividend data, preferences, and your Alpha Vantage key sync to your private Firestore record. Firebase encrypts Firestore data at rest and HTTPS protects it in transit. Security rules allow access only to your signed-in Google account.</p>
+      </section>
       <section className="panel data-settings">
         <div className="provider-heading">
           <div className="provider-icon"><Database size={21} /></div>
@@ -387,7 +443,7 @@ function DataSettings({ apiKey, syncState, lastSync, onConnect, onSync }) {
           <div className="sync-actions"><span>{lastSync ? `Last synced ${new Date(lastSync).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : "Never synced"}</span><button className="button secondary" onClick={() => onSync()} disabled={!connected || syncState.status === "syncing"}><RefreshCw className={syncState.status === "syncing" ? "spinning" : ""} size={16} />Refresh now</button></div>
         </div>
         {syncState.message && <div className={`sync-message ${syncState.status}`}>{syncState.message}</div>}
-        <p className="data-note">Your API key stays in this browser’s local storage and is sent only to Alpha Vantage. Saved portfolio data remains available if the API is offline.</p>
+        <p className="data-note">When signed in, your API key is included in your private encrypted cloud record so dividend refresh works across devices. It is sent only to Firestore and Alpha Vantage.</p>
       </section>
     </>
   );
@@ -409,12 +465,116 @@ function App() {
     catch { return { fetchedAt: 0, events: {} }; }
   });
   const [syncState, setSyncState] = useState({ status: "idle", message: "" });
+  const [user, setUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(firebaseConfigured);
+  const [authError, setAuthError] = useState("");
+  const [cloudReady, setCloudReady] = useState(false);
+  const [cloudState, setCloudState] = useState({
+    status: firebaseConfigured ? "idle" : "local",
+    message: firebaseConfigured ? "" : "Cloud sync is not configured; this device is using local storage.",
+  });
+  const clientIdRef = useRef(getClientId());
+  const applyingCloudRef = useRef(false);
+  const latestDataRef = useRef({ holdings, apiKey, dividendCache, theme });
+
   useEffect(() => setHoldings((current) => current.some((holding) => holding.whtVersion !== 2) ? applyWhtPolicy(current) : current), []);
   useEffect(() => localStorage.setItem(STORAGE_KEY, JSON.stringify(holdings)), [holdings]);
+  useEffect(() => {
+    if (apiKey) localStorage.setItem(API_KEY_STORAGE, apiKey);
+    else localStorage.removeItem(API_KEY_STORAGE);
+  }, [apiKey]);
+  useEffect(() => localStorage.setItem(DIVIDEND_CACHE_KEY, JSON.stringify(dividendCache)), [dividendCache]);
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
+  useEffect(() => {
+    latestDataRef.current = { holdings, apiKey, dividendCache, theme };
+  }, [holdings, apiKey, dividendCache, theme]);
+
+  useEffect(() => observeAuth((currentUser) => {
+    setUser(currentUser);
+    setAuthLoading(false);
+    setAuthError("");
+    if (!currentUser) {
+      setCloudReady(false);
+      setCloudState({
+        status: firebaseConfigured ? "idle" : "local",
+        message: firebaseConfigured ? "Sign in to sync this portfolio across devices." : "Cloud sync is not configured; this device is using local storage.",
+      });
+    }
+  }, (error) => {
+    setAuthLoading(false);
+    setAuthError(error.message);
+  }), []);
+
+  useEffect(() => {
+    if (!user) return undefined;
+    setCloudState({ status: "syncing", message: "Loading your encrypted cloud portfolio…" });
+    let firstSnapshot = true;
+    return subscribeToPortfolio(user.uid, (snapshot) => {
+      if (snapshot.exists()) {
+        const cloudData = snapshot.data();
+        if (firstSnapshot || cloudData.updatedBy !== clientIdRef.current) {
+          applyingCloudRef.current = true;
+          if (Array.isArray(cloudData.holdings)) setHoldings(applyWhtPolicy(cloudData.holdings));
+          if (typeof cloudData.apiKey === "string") setApiKey(cloudData.apiKey);
+          if (cloudData.dividendCache?.events) setDividendCache(cloudData.dividendCache);
+          if (cloudData.theme === "light" || cloudData.theme === "dark") setTheme(cloudData.theme);
+        }
+      }
+      firstSnapshot = false;
+      setCloudReady(true);
+      setCloudState({ status: "synced", message: "Your portfolio is synced across devices." });
+    }, (error) => {
+      setCloudReady(false);
+      setCloudState({ status: "error", message: `Cloud sync failed: ${error.message}` });
+    });
+  }, [user]);
+
+  useEffect(() => {
+    if (!user || !cloudReady) return undefined;
+    if (applyingCloudRef.current) {
+      applyingCloudRef.current = false;
+      return undefined;
+    }
+    setCloudState({ status: "syncing", message: "Saving changes securely…" });
+    const timeout = window.setTimeout(() => {
+      savePortfolio(user.uid, {
+        schemaVersion: 1,
+        updatedBy: clientIdRef.current,
+        holdings,
+        apiKey,
+        dividendCache,
+        theme,
+      }).then(() => {
+        setCloudState({ status: "synced", message: "Your portfolio is synced across devices." });
+      }).catch((error) => {
+        setCloudState({ status: "error", message: `Cloud sync failed: ${error.message}` });
+      });
+    }, 700);
+    return () => window.clearTimeout(timeout);
+  }, [holdings, apiKey, dividendCache, theme, user, cloudReady]);
+
+  const handleSignIn = async () => {
+    setAuthError("");
+    setAuthLoading(true);
+    try {
+      await signInWithGoogle();
+    } catch (error) {
+      setAuthError(error.message);
+      setAuthLoading(false);
+    }
+  };
+  const handleSignOut = async () => {
+    setAuthError("");
+    try {
+      await signOutUser();
+    } catch (error) {
+      setAuthError(error.message);
+    }
+  };
+
   const syncDividendData = async (key = apiKey) => {
     if (!key) return;
     setSyncState({ status: "syncing", message: "Refreshing declared dividend data…" });
@@ -451,7 +611,6 @@ function App() {
     return () => window.clearInterval(interval);
   }, [apiKey]);
   const connectApi = (key) => {
-    localStorage.setItem(API_KEY_STORAGE, key);
     setApiKey(key);
     syncDividendData(key);
   };
@@ -473,15 +632,15 @@ function App() {
           {nav.map(([id, Icon, label]) => <button key={id} className={view === id ? "active" : ""} onClick={() => setView(id)}><Icon size={19} /><span>{label}</span></button>)}
           <button className={`mobile-settings ${view === "settings" ? "active" : ""}`} onClick={() => setView("settings")}><Settings size={19} /><span>Settings</span></button>
         </nav>
-        <div className="sidebar-bottom"><button className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}><Settings size={19} /><span>Settings</span></button><div className="user-card"><div className="user-avatar">TP</div><div><strong>Tracy Pham</strong><span>Personal portfolio</span></div><MoreHorizontal size={18} /></div></div>
+        <div className="sidebar-bottom"><button className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}><Settings size={19} /><span>Settings</span></button><div className="user-card">{user?.photoURL ? <img className="user-avatar account-photo" src={user.photoURL} alt="" referrerPolicy="no-referrer" /> : <div className="user-avatar">TP</div>}<div><strong>{user?.displayName || "Tracy Pham"}</strong><span>{user ? "Cloud portfolio" : "Local portfolio"}</span></div><MoreHorizontal size={18} /></div></div>
       </aside>
       <div className="main-area">
-        <header><div className="mobile-logo"><Logo /></div><div className="header-spacer" /><div className="market-status"><i /> Markets open</div><button className="icon-button theme-toggle" aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`} title={`Switch to ${theme === "light" ? "dark" : "light"} mode`} onClick={() => setTheme((current) => current === "light" ? "dark" : "light")}>{theme === "light" ? <Moon size={19} /> : <Sun size={19} />}</button><button className="icon-button notification"><Bell size={19} /><i /></button><div className="header-value"><span>Total balance</span><strong>{currency.format(totalValue)}</strong></div></header>
+        <header><div className="mobile-logo"><Logo /></div><div className="header-spacer" /><div className="market-status"><i /> Markets open</div><AuthButton user={user} loading={authLoading} cloudState={cloudState} onSignIn={handleSignIn} onSignOut={handleSignOut} onOpenSettings={() => setView("settings")} /><button className="icon-button theme-toggle" aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`} title={`Switch to ${theme === "light" ? "dark" : "light"} mode`} onClick={() => setTheme((current) => current === "light" ? "dark" : "light")}>{theme === "light" ? <Moon size={19} /> : <Sun size={19} />}</button><button className="icon-button notification"><Bell size={19} /><i /></button><div className="header-value"><span>Total balance</span><strong>{currency.format(totalValue)}</strong></div></header>
         <main>
           {view === "dashboard" && <Dashboard holdings={holdings} dividendEvents={dividendCache.events} setView={setView} onEdit={(h) => setModal(h)} onAdd={() => setModal("new")} />}
           {view === "portfolio" && <Portfolio holdings={holdings} onEdit={(h) => setModal(h)} onAdd={() => setModal("new")} onDelete={(id) => setHoldings((h) => h.filter((item) => item.id !== id))} />}
           {view === "calendar" && <Calendar holdings={holdings} />}
-          {view === "settings" && <DataSettings apiKey={apiKey} syncState={syncState} lastSync={dividendCache.fetchedAt} onConnect={connectApi} onSync={() => syncDividendData()} />}
+          {view === "settings" && <DataSettings apiKey={apiKey} syncState={syncState} lastSync={dividendCache.fetchedAt} onConnect={connectApi} onSync={() => syncDividendData()} user={user} authLoading={authLoading} cloudState={cloudState} authError={authError} onSignIn={handleSignIn} onSignOut={handleSignOut} />}
         </main>
       </div>
       {modal && <HoldingModal holding={modal === "new" ? null : modal} onClose={() => setModal(null)} onSave={saveHolding} />}

@@ -1,0 +1,16 @@
+{
+  "auth": {
+    "providers": {
+      "googleSignIn": {
+        "oAuthBrandDisplayName": "Yieldfolio",
+        "supportEmail": "wsonelab@gmail.com",
+        "authorizedRedirectUris": [
+          "https://tphamhz.github.io/yieldfolio/"
+        ]
+      }
+    }
+  },
+  "firestore": {
+    "rules": "firestore.rules"
+  }
+}
