@@ -245,7 +245,7 @@ function HoldingModal({ holding, onClose, onSave }) {
   );
 }
 
-function Dashboard({ holdings, dividendEvents, setView, onEdit, onAdd }) {
+function Dashboard({ holdings, dividendEvents, setView, onEdit, onAdd, user }) {
   const totalValue = holdings.reduce((sum, h) => sum + h.shares * h.price, 0);
   const totalCost = holdings.reduce((sum, h) => sum + h.shares * h.avgCost, 0);
   const annualGross = holdings.reduce((sum, h) => sum + grossIncome(h), 0);
@@ -306,7 +306,7 @@ function Dashboard({ holdings, dividendEvents, setView, onEdit, onAdd }) {
   return (
     <>
       <div className="page-heading">
-        <div><div className="eyebrow">Portfolio overview</div><h1>Good morning, Tracy.</h1><p>Here’s how your dividend engine is doing.</p></div>
+        <div><div className="eyebrow">Portfolio overview</div><h1>{user ? `Good morning, ${user.displayName?.split(" ")[0] || "investor"}.` : "Your portfolio"}</h1><p>Here’s how your dividend engine is doing.</p></div>
         <button className="button primary" onClick={onAdd}><Plus size={18} />Add holding</button>
       </div>
       <div className="stats-grid">
@@ -681,12 +681,12 @@ function App() {
           {nav.map(([id, Icon, label]) => <button key={id} className={view === id ? "active" : ""} onClick={() => setView(id)}><Icon size={19} /><span>{label}</span></button>)}
           <button className={`mobile-settings ${view === "settings" ? "active" : ""}`} onClick={() => setView("settings")}><Settings size={19} /><span>Settings</span></button>
         </nav>
-        <div className="sidebar-bottom"><button className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}><Settings size={19} /><span>Settings</span></button><div className="user-card">{user?.photoURL ? <img className="user-avatar account-photo" src={user.photoURL} alt="" referrerPolicy="no-referrer" /> : <div className="user-avatar">TP</div>}<div><strong>{user?.displayName || "Tracy Pham"}</strong><span>{user ? "Cloud portfolio" : "Local portfolio"}</span></div><MoreHorizontal size={18} /></div></div>
+        <div className="sidebar-bottom"><button className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}><Settings size={19} /><span>Settings</span></button><div className="user-card">{user?.photoURL ? <img className="user-avatar account-photo" src={user.photoURL} alt="" referrerPolicy="no-referrer" /> : <div className="user-avatar">YF</div>}<div><strong>{user?.displayName || "Your portfolio"}</strong><span>{user ? "Cloud portfolio" : "Sign in to sync"}</span></div><MoreHorizontal size={18} /></div></div>
       </aside>
       <div className="main-area">
         <header><div className="mobile-logo"><Logo /></div><div className="header-spacer" /><div className="market-status"><i /> Markets open</div><AuthButton user={user} loading={authLoading} cloudState={cloudState} onSignIn={handleSignIn} onSignOut={handleSignOut} onOpenSettings={() => setView("settings")} /><button className="icon-button theme-toggle" aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`} title={`Switch to ${theme === "light" ? "dark" : "light"} mode`} onClick={() => setTheme((current) => current === "light" ? "dark" : "light")}>{theme === "light" ? <Moon size={19} /> : <Sun size={19} />}</button><button className="icon-button notification"><Bell size={19} /><i /></button><div className="header-value"><span>Total balance</span><strong>{currency.format(totalValue)}</strong></div></header>
         <main>
-          {view === "dashboard" && <Dashboard holdings={holdings} dividendEvents={dividendCache.events} setView={setView} onEdit={(h) => setModal(h)} onAdd={() => setModal("new")} />}
+          {view === "dashboard" && <Dashboard holdings={holdings} dividendEvents={dividendCache.events} setView={setView} onEdit={(h) => setModal(h)} onAdd={() => setModal("new")} user={user} />}
           {view === "portfolio" && <Portfolio holdings={holdings} onEdit={(h) => setModal(h)} onAdd={() => setModal("new")} onDelete={(id) => setHoldings((h) => h.filter((item) => item.id !== id))} />}
           {view === "calendar" && <Calendar holdings={holdings} />}
           {view === "settings" && <DataSettings apiKey={apiKey} syncState={syncState} lastSync={dividendCache.fetchedAt} onConnect={connectApi} onSync={() => syncDividendData()} user={user} authLoading={authLoading} cloudState={cloudState} authError={authError} onSignIn={handleSignIn} onSignOut={handleSignOut} />}
