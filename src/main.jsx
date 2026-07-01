@@ -269,7 +269,7 @@ function Dashboard({ holdings, dividendEvents, setView, onEdit, onAdd, user }) {
   const nextPayoutNet = nextPayouts.reduce((sum, event) => sum + netIncome(event.amount, event.holding), 0);
   const nextPayoutTickers = nextPayouts.map((event) => event.holding.ticker).join(" + ");
   const monthKey = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-  const actualMonthSummary = (date) => {
+  const actualMonthSummary = (date, { fallbackToSchedule = false } = {}) => {
     const key = monthKey(date);
     const records = holdings.flatMap((holding) => {
       const apiEvent = dividendEvents?.[holding.ticker]?.find((event) => {
@@ -277,17 +277,20 @@ function Dashboard({ holdings, dividendEvents, setView, onEdit, onAdd, user }) {
         return eventDate?.slice(0, 7) === key;
       });
       const dividend = apiEvent?.amount ?? distributionHistory[holding.ticker]?.[key];
-      return dividend == null ? [] : [{ holding, gross: holding.shares * dividend }];
+      if (dividend != null) return [{ holding, gross: holding.shares * dividend, projected: false }];
+      if (!fallbackToSchedule) return [];
+      const scheduledEvent = buildEvents([holding]).find((event) => monthKey(event.payDate) === key);
+      return scheduledEvent ? [{ holding, gross: scheduledEvent.amount, projected: true }] : [];
     });
     const gross = records.reduce((sum, record) => sum + record.gross, 0);
     const wht = records.reduce((sum, record) => sum + withholding(record.gross, record.holding), 0);
-    return { gross, wht, net: gross - wht };
+    return { gross, wht, net: gross - wht, hasProjected: records.some((record) => record.projected) };
   };
   const previousMonthDate = new Date(today.getFullYear(), today.getMonth() - 1, 1, 12);
   const currentMonthDate = new Date(today.getFullYear(), today.getMonth(), 1, 12);
   const nextMonthDate = new Date(today.getFullYear(), today.getMonth() + 1, 1, 12);
   const previousMonth = actualMonthSummary(previousMonthDate);
-  const currentMonth = actualMonthSummary(currentMonthDate);
+  const currentMonth = actualMonthSummary(currentMonthDate, { fallbackToSchedule: true });
   const nextMonthEvents = buildEvents(holdings).filter((event) => event.payDate.getFullYear() === nextMonthDate.getFullYear() && event.payDate.getMonth() === nextMonthDate.getMonth());
   const nextMonthGross = nextMonthEvents.reduce((sum, event) => sum + event.amount, 0);
   const nextMonthWht = nextMonthEvents.reduce((sum, event) => sum + withholding(event.amount, event.holding), 0);
@@ -332,7 +335,7 @@ function Dashboard({ holdings, dividendEvents, setView, onEdit, onAdd, user }) {
 
       <div className="monthly-stats-grid">
         <StatCard label={`${previousMonthDate.toLocaleString("en-US", { month: "long" })} net payout`} value={currency.format(previousMonth.net)} detail={`Actual · ${currency.format(previousMonth.gross)} gross · ${currency.format(previousMonth.wht)} WHT`} icon={ArrowDownRight} />
-        <StatCard label={`${currentMonthDate.toLocaleString("en-US", { month: "long" })} net payout`} value={currency.format(currentMonth.net)} detail={`Actual · ${currency.format(currentMonth.gross)} gross · ${currency.format(currentMonth.wht)} WHT`} icon={CircleDollarSign} />
+        <StatCard label={`${currentMonthDate.toLocaleString("en-US", { month: "long" })} net payout`} value={currency.format(currentMonth.net)} detail={`${currentMonth.hasProjected ? "Projected" : "Actual"} · ${currency.format(currentMonth.gross)} gross · ${currency.format(currentMonth.wht)} WHT`} icon={CircleDollarSign} />
         <StatCard label={`${nextMonthDate.toLocaleString("en-US", { month: "long" })} net payout`} value={currency.format(nextMonthNet)} detail={`Projected · ${currency.format(nextMonthGross)} gross · ${currency.format(nextMonthWht)} WHT`} icon={ArrowUpRight} />
       </div>
 
