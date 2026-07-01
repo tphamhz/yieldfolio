@@ -47,6 +47,8 @@ const defaultHoldings = [
   { id: 3, ticker: "JEPQ", name: "JPMorgan Nasdaq Equity Premium Income Active UCITS ETF · LSE", sector: "Technology", shares: 1200, price: 27.11, avgCost: 27.11, dividend: 0.2517, frequency: 12, whtRate: 15, whtVersion: 2, exDate: "2026-06-11", payDate: "2026-07-08", color: "#486b82" },
   { id: 4, ticker: "JEPI", name: "JPMorgan US Equity Premium Income Active UCITS ETF · LSE", sector: "Other", shares: 600, price: 24.33, avgCost: 24.33, dividend: 0.1825, frequency: 12, whtRate: 15, whtVersion: 2, exDate: "2026-06-11", payDate: "2026-07-08", color: "#6f5a82" },
 ];
+const publicHoldings = defaultHoldings.map((holding) => ({ ...holding, shares: 100 }));
+const emptyDividendCache = { fetchedAt: 0, events: {} };
 
 const STORAGE_KEY = "yieldfolio-holdings-v3";
 const API_KEY_STORAGE = "yieldfolio-alpha-vantage-api-key";
@@ -96,6 +98,19 @@ const applyWhtPolicy = (holdings) => holdings.map((holding) => ({
     : (holding.name?.includes("UCITS ETF · LSE") ? 15 : (holding.whtRate ?? (["QQQI", "SPYI"].includes(holding.ticker) ? 30 : 0))),
   whtVersion: 2,
 }));
+
+function readLocalPortfolio(theme) {
+  let holdings = defaultHoldings;
+  let dividendCache = emptyDividendCache;
+  try { holdings = JSON.parse(localStorage.getItem(STORAGE_KEY)) || defaultHoldings; } catch { /* Use defaults. */ }
+  try { dividendCache = JSON.parse(localStorage.getItem(DIVIDEND_CACHE_KEY)) || emptyDividendCache; } catch { /* Use empty cache. */ }
+  return {
+    holdings: applyWhtPolicy(holdings),
+    apiKey: localStorage.getItem(API_KEY_STORAGE) || "",
+    dividendCache,
+    theme,
+  };
+}
 
 function getClientId() {
   const existing = localStorage.getItem(CLIENT_ID_STORAGE_KEY);
@@ -242,6 +257,11 @@ function Dashboard({ holdings, dividendEvents, setView, onEdit, onAdd }) {
   today.setHours(0, 0, 0, 0);
   const allUpcoming = buildEvents(holdings).filter((event) => event.payDate >= today).sort((a, b) => a.payDate - b.payDate);
   const upcoming = allUpcoming.slice(0, 4);
+  const nextExDividends = holdings.map((holding) => (
+    buildEvents([holding])
+      .filter((event) => event.exDate >= today)
+      .sort((a, b) => a.exDate - b.exDate)[0]
+  )).filter(Boolean).sort((a, b) => a.exDate - b.exDate);
   const nextPayouts = allUpcoming.length
     ? allUpcoming.filter((event) => event.payDate.getTime() === allUpcoming[0].payDate.getTime())
     : [];
@@ -300,6 +320,20 @@ function Dashboard({ holdings, dividendEvents, setView, onEdit, onAdd }) {
         <StatCard label={`${currentMonthDate.toLocaleString("en-US", { month: "long" })} net payout`} value={currency.format(currentMonth.net)} detail={`Actual · ${currency.format(currentMonth.gross)} gross · ${currency.format(currentMonth.wht)} WHT`} icon={CircleDollarSign} />
         <StatCard label={`${nextMonthDate.toLocaleString("en-US", { month: "long" })} net payout`} value={currency.format(nextMonthNet)} detail={`Projected · ${currency.format(nextMonthGross)} gross · ${currency.format(nextMonthWht)} WHT`} icon={ArrowUpRight} />
       </div>
+
+      <section className="panel ex-dividend-panel">
+        <div className="panel-head"><div><div className="eyebrow">Qualification dates</div><h2>Next ex-dividend</h2></div><button className="text-button" onClick={() => setView("calendar")}>View calendar <ChevronRight size={15} /></button></div>
+        <div className="ex-dividend-grid">
+          {nextExDividends.map((event) => (
+            <article className="ex-dividend-card" key={`next-ex-${event.holding.id}`}>
+              <div className="date-box ex-date"><strong>{event.exDate.getDate()}</strong><span>{event.exDate.toLocaleString("en-US", { month: "short" })}</span></div>
+              <Avatar ticker={event.holding.ticker} color={event.holding.color} small />
+              <div className="payout-company"><strong>{event.holding.ticker}</strong><span>{event.holding.shares} shares · {preciseCurrency.format(event.holding.dividend)} / share</span></div>
+              <div className="amount-stack"><strong>{preciseCurrency.format(netIncome(event.amount, event.holding))}</strong><span>estimated net</span></div>
+            </article>
+          ))}
+        </div>
+      </section>
 
       <div className="dashboard-grid">
         <section className="panel income-panel">
@@ -452,18 +486,11 @@ function DataSettings({ apiKey, syncState, lastSync, onConnect, onSync, user, au
 function App() {
   const [view, setView] = useState("dashboard");
   const [theme, setTheme] = useState(() => localStorage.getItem(THEME_STORAGE_KEY) || "light");
-  const [holdings, setHoldings] = useState(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY)) || defaultHoldings;
-      return applyWhtPolicy(saved);
-    } catch { return defaultHoldings; }
-  });
+  const [localSeed] = useState(() => readLocalPortfolio(theme));
+  const [holdings, setHoldings] = useState(() => publicHoldings.map((holding) => ({ ...holding })));
   const [modal, setModal] = useState(null);
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem(API_KEY_STORAGE) || "");
-  const [dividendCache, setDividendCache] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(DIVIDEND_CACHE_KEY)) || { fetchedAt: 0, events: {} }; }
-    catch { return { fetchedAt: 0, events: {} }; }
-  });
+  const [apiKey, setApiKey] = useState("");
+  const [dividendCache, setDividendCache] = useState(emptyDividendCache);
   const [syncState, setSyncState] = useState({ status: "idle", message: "" });
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(firebaseConfigured);
@@ -478,12 +505,17 @@ function App() {
   const latestDataRef = useRef({ holdings, apiKey, dividendCache, theme });
 
   useEffect(() => setHoldings((current) => current.some((holding) => holding.whtVersion !== 2) ? applyWhtPolicy(current) : current), []);
-  useEffect(() => localStorage.setItem(STORAGE_KEY, JSON.stringify(holdings)), [holdings]);
   useEffect(() => {
+    if (user) localStorage.setItem(STORAGE_KEY, JSON.stringify(holdings));
+  }, [holdings, user]);
+  useEffect(() => {
+    if (!user) return;
     if (apiKey) localStorage.setItem(API_KEY_STORAGE, apiKey);
     else localStorage.removeItem(API_KEY_STORAGE);
-  }, [apiKey]);
-  useEffect(() => localStorage.setItem(DIVIDEND_CACHE_KEY, JSON.stringify(dividendCache)), [dividendCache]);
+  }, [apiKey, user]);
+  useEffect(() => {
+    if (user) localStorage.setItem(DIVIDEND_CACHE_KEY, JSON.stringify(dividendCache));
+  }, [dividendCache, user]);
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem(THEME_STORAGE_KEY, theme);
@@ -497,6 +529,10 @@ function App() {
     setAuthLoading(false);
     setAuthError("");
     if (!currentUser) {
+      setHoldings(publicHoldings.map((holding) => ({ ...holding })));
+      setApiKey("");
+      setDividendCache(emptyDividendCache);
+      setSyncState({ status: "idle", message: "" });
       setCloudReady(false);
       setCloudState({
         status: firebaseConfigured ? "idle" : "local",
@@ -522,6 +558,19 @@ function App() {
           if (cloudData.dividendCache?.events) setDividendCache(cloudData.dividendCache);
           if (cloudData.theme === "light" || cloudData.theme === "dark") setTheme(cloudData.theme);
         }
+      } else if (firstSnapshot) {
+        applyingCloudRef.current = true;
+        setHoldings(localSeed.holdings);
+        setApiKey(localSeed.apiKey);
+        setDividendCache(localSeed.dividendCache);
+        setTheme(localSeed.theme);
+        savePortfolio(user.uid, {
+          schemaVersion: 1,
+          updatedBy: clientIdRef.current,
+          ...localSeed,
+        }).catch((error) => {
+          setCloudState({ status: "error", message: `Cloud sync failed: ${error.message}` });
+        });
       }
       firstSnapshot = false;
       setCloudReady(true);
@@ -530,7 +579,7 @@ function App() {
       setCloudReady(false);
       setCloudState({ status: "error", message: `Cloud sync failed: ${error.message}` });
     });
-  }, [user]);
+  }, [user, localSeed]);
 
   useEffect(() => {
     if (!user || !cloudReady) return undefined;
