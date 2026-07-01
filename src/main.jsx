@@ -315,11 +315,6 @@ function Dashboard({ holdings, dividendEvents, setView, onEdit, onAdd, user }) {
         <StatCard label="Net portfolio yield" value={`${yieldOnValue.toFixed(2)}%`} detail={`Gross yield ${totalValue ? (annualGross / totalValue * 100).toFixed(2) : "0.00"}%`} icon={PieChart} />
         <StatCard label="Next net payout" value={nextPayouts.length ? currency.format(nextPayoutNet) : "$0"} detail={nextPayouts.length ? `${currency.format(nextPayoutGross)} gross · ${nextPayoutTickers} · ${shortDate.format(nextPayouts[0].payDate)}` : "No payout scheduled"} icon={CalendarDays} onClick={() => setView("calendar")} />
       </div>
-      <div className="monthly-stats-grid">
-        <StatCard label={`${previousMonthDate.toLocaleString("en-US", { month: "long" })} net payout`} value={currency.format(previousMonth.net)} detail={`Actual · ${currency.format(previousMonth.gross)} gross · ${currency.format(previousMonth.wht)} WHT`} icon={ArrowDownRight} />
-        <StatCard label={`${currentMonthDate.toLocaleString("en-US", { month: "long" })} net payout`} value={currency.format(currentMonth.net)} detail={`Actual · ${currency.format(currentMonth.gross)} gross · ${currency.format(currentMonth.wht)} WHT`} icon={CircleDollarSign} />
-        <StatCard label={`${nextMonthDate.toLocaleString("en-US", { month: "long" })} net payout`} value={currency.format(nextMonthNet)} detail={`Projected · ${currency.format(nextMonthGross)} gross · ${currency.format(nextMonthWht)} WHT`} icon={ArrowUpRight} />
-      </div>
 
       <section className="panel ex-dividend-panel">
         <div className="panel-head"><div><div className="eyebrow">Qualification dates</div><h2>Next ex-dividend</h2></div><button className="text-button" onClick={() => setView("calendar")}>View calendar <ChevronRight size={15} /></button></div>
@@ -334,6 +329,12 @@ function Dashboard({ holdings, dividendEvents, setView, onEdit, onAdd, user }) {
           ))}
         </div>
       </section>
+
+      <div className="monthly-stats-grid">
+        <StatCard label={`${previousMonthDate.toLocaleString("en-US", { month: "long" })} net payout`} value={currency.format(previousMonth.net)} detail={`Actual · ${currency.format(previousMonth.gross)} gross · ${currency.format(previousMonth.wht)} WHT`} icon={ArrowDownRight} />
+        <StatCard label={`${currentMonthDate.toLocaleString("en-US", { month: "long" })} net payout`} value={currency.format(currentMonth.net)} detail={`Actual · ${currency.format(currentMonth.gross)} gross · ${currency.format(currentMonth.wht)} WHT`} icon={CircleDollarSign} />
+        <StatCard label={`${nextMonthDate.toLocaleString("en-US", { month: "long" })} net payout`} value={currency.format(nextMonthNet)} detail={`Projected · ${currency.format(nextMonthGross)} gross · ${currency.format(nextMonthWht)} WHT`} icon={ArrowUpRight} />
+      </div>
 
       <div className="dashboard-grid">
         <section className="panel income-panel">
