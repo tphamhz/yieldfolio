@@ -63,6 +63,16 @@ const distributionHistory = {
   JEPQ: { "2026-05": 0.2156, "2026-06": 0.3021 },
   JEPI: { "2026-05": 0.1424, "2026-06": 0.2150 },
 };
+const declaredDividendSchedule = {
+  JEPQ: [
+    { exDate: "2026-06-11", payDate: "2026-07-08", amount: 0.3021 },
+    { exDate: "2026-07-09" },
+  ],
+  JEPI: [
+    { exDate: "2026-06-11", payDate: "2026-07-08", amount: 0.2150 },
+    { exDate: "2026-07-09" },
+  ],
+};
 
 const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 const preciseCurrency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2 });
@@ -75,16 +85,49 @@ function addMonths(dateString, months) {
   return d;
 }
 
-function buildEvents(holdings) {
+function localDate(dateString) {
+  return new Date(`${dateString}T12:00:00`);
+}
+
+function monthKey(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function declaredEventsForHolding(holding, dividendEvents = {}) {
+  const cachedEvents = dividendEvents?.[holding.ticker] || [];
+  const fallbackEvents = declaredDividendSchedule[holding.ticker] || [];
+  const eventsByKey = new Map();
+  [...fallbackEvents, ...cachedEvents].forEach((event) => {
+    if (!event?.exDate) return;
+    const key = `${event.exDate}-${event.paymentDate || event.payDate || ""}`;
+    eventsByKey.set(key, {
+      exDate: event.exDate,
+      payDate: event.paymentDate || event.payDate || "",
+      amount: Number(event.amount || 0) || undefined,
+    });
+  });
+  return [...eventsByKey.values()];
+}
+
+function buildEvents(holdings, dividendEvents = {}) {
   return holdings.flatMap((holding) => {
     const spacing = Math.round(12 / holding.frequency);
-    return Array.from({ length: holding.frequency }, (_, index) => ({
-      id: `${holding.id}-${index}`,
-      holding,
-      exDate: addMonths(holding.exDate, index * spacing),
-      payDate: addMonths(holding.payDate, index * spacing),
-      amount: holding.shares * holding.dividend,
-    }));
+    const declared = declaredEventsForHolding(holding, dividendEvents);
+    return Array.from({ length: holding.frequency }, (_, index) => {
+      const generatedExDate = addMonths(holding.exDate, index * spacing);
+      const generatedPayDate = addMonths(holding.payDate, index * spacing);
+      const declaredEvent = declared.find((event) => {
+        if (event.payDate) return event.payDate.slice(0, 7) === monthKey(generatedPayDate);
+        return event.exDate?.slice(0, 7) === monthKey(generatedExDate);
+      });
+      return {
+        id: `${holding.id}-${index}`,
+        holding,
+        exDate: declaredEvent?.exDate ? localDate(declaredEvent.exDate) : generatedExDate,
+        payDate: declaredEvent?.payDate ? localDate(declaredEvent.payDate) : generatedPayDate,
+        amount: holding.shares * (declaredEvent?.amount ?? holding.dividend),
+      };
+    });
   });
 }
 
@@ -255,10 +298,10 @@ function Dashboard({ holdings, dividendEvents, setView, onEdit, onAdd, user }) {
   const returnAmount = totalValue - totalCost;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const allUpcoming = buildEvents(holdings).filter((event) => event.payDate >= today).sort((a, b) => a.payDate - b.payDate);
+  const allUpcoming = buildEvents(holdings, dividendEvents).filter((event) => event.payDate >= today).sort((a, b) => a.payDate - b.payDate);
   const upcoming = allUpcoming.slice(0, 4);
   const nextExDividends = holdings.map((holding) => (
-    buildEvents([holding])
+    buildEvents([holding], dividendEvents)
       .filter((event) => event.exDate >= today)
       .sort((a, b) => a.exDate - b.exDate)[0]
   )).filter(Boolean).sort((a, b) => a.exDate - b.exDate);
@@ -279,7 +322,7 @@ function Dashboard({ holdings, dividendEvents, setView, onEdit, onAdd, user }) {
       const dividend = apiEvent?.amount ?? distributionHistory[holding.ticker]?.[key];
       if (dividend != null) return [{ holding, gross: holding.shares * dividend, projected: false }];
       if (!fallbackToSchedule) return [];
-      const scheduledEvent = buildEvents([holding]).find((event) => monthKey(event.payDate) === key);
+      const scheduledEvent = buildEvents([holding], dividendEvents).find((event) => monthKey(event.payDate) === key);
       return scheduledEvent ? [{ holding, gross: scheduledEvent.amount, projected: true }] : [];
     });
     const gross = records.reduce((sum, record) => sum + record.gross, 0);
@@ -291,14 +334,14 @@ function Dashboard({ holdings, dividendEvents, setView, onEdit, onAdd, user }) {
   const nextMonthDate = new Date(today.getFullYear(), today.getMonth() + 1, 1, 12);
   const previousMonth = actualMonthSummary(previousMonthDate);
   const currentMonth = actualMonthSummary(currentMonthDate, { fallbackToSchedule: true });
-  const nextMonthEvents = buildEvents(holdings).filter((event) => event.payDate.getFullYear() === nextMonthDate.getFullYear() && event.payDate.getMonth() === nextMonthDate.getMonth());
+  const nextMonthEvents = buildEvents(holdings, dividendEvents).filter((event) => event.payDate.getFullYear() === nextMonthDate.getFullYear() && event.payDate.getMonth() === nextMonthDate.getMonth());
   const nextMonthGross = nextMonthEvents.reduce((sum, event) => sum + event.amount, 0);
   const nextMonthWht = nextMonthEvents.reduce((sum, event) => sum + withholding(event.amount, event.holding), 0);
   const nextMonthNet = nextMonthGross - nextMonthWht;
   const months = ["Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   const monthData = months.map((month, index) => {
     const monthNumber = 6 + index;
-    const events = buildEvents(holdings).filter((e) => e.payDate.getFullYear() === 2026 && e.payDate.getMonth() === monthNumber);
+    const events = buildEvents(holdings, dividendEvents).filter((e) => e.payDate.getFullYear() === 2026 && e.payDate.getMonth() === monthNumber);
     return {
       gross: events.reduce((sum, e) => sum + e.amount, 0),
       net: events.reduce((sum, e) => sum + netIncome(e.amount, e.holding), 0),
@@ -393,9 +436,9 @@ function Portfolio({ holdings, onEdit, onAdd, onDelete }) {
   );
 }
 
-function Calendar({ holdings }) {
+function Calendar({ holdings, dividendEvents }) {
   const [cursor, setCursor] = useState(new Date("2026-09-01T12:00:00"));
-  const events = buildEvents(holdings);
+  const events = buildEvents(holdings, dividendEvents);
   const year = cursor.getFullYear();
   const month = cursor.getMonth();
   const firstDay = new Date(year, month, 1).getDay();
@@ -692,7 +735,7 @@ function App() {
         <main>
           {view === "dashboard" && <Dashboard holdings={holdings} dividendEvents={dividendCache.events} setView={setView} onEdit={(h) => setModal(h)} onAdd={() => setModal("new")} user={user} />}
           {view === "portfolio" && <Portfolio holdings={holdings} onEdit={(h) => setModal(h)} onAdd={() => setModal("new")} onDelete={(id) => setHoldings((h) => h.filter((item) => item.id !== id))} />}
-          {view === "calendar" && <Calendar holdings={holdings} />}
+          {view === "calendar" && <Calendar holdings={holdings} dividendEvents={dividendCache.events} />}
           {view === "settings" && <DataSettings apiKey={apiKey} syncState={syncState} lastSync={dividendCache.fetchedAt} onConnect={connectApi} onSync={() => syncDividendData()} user={user} authLoading={authLoading} cloudState={cloudState} authError={authError} onSignIn={handleSignIn} onSignOut={handleSignOut} />}
         </main>
       </div>
