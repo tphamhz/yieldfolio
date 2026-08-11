@@ -55,7 +55,8 @@ const API_KEY_STORAGE = "yieldfolio-alpha-vantage-api-key";
 const DIVIDEND_CACHE_KEY = "yieldfolio-dividend-cache";
 const THEME_STORAGE_KEY = "yieldfolio-theme";
 const CLIENT_ID_STORAGE_KEY = "yieldfolio-client-id";
-const CURRENT_SCHEMA_VERSION = 2;
+const DELETED_TICKERS_STORAGE_KEY = "yieldfolio-deleted-tickers";
+const CURRENT_SCHEMA_VERSION = 3;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const providerSymbols = { QQQI: "QQQI", SPYI: "SPYI", JEPQ: "JEPQ.LON", JEPI: "JEPI.LON" };
 const distributionHistory = {
@@ -148,32 +149,45 @@ const applyWhtPolicy = (holdings) => holdings.map((holding) => ({
     : (holding.name?.includes("UCITS ETF · LSE") ? 15 : (holding.whtRate ?? (["QQQI", "SPYI"].includes(holding.ticker) ? 30 : 0))),
   whtVersion: 2,
 }));
-const normalizeTrackedHoldings = (holdings = defaultHoldings, { addMissingDefaults = false } = {}) => {
+const normalizeTrackedHoldings = (holdings = defaultHoldings, { repairTickers = [], deletedTickers = [] } = {}) => {
   const safeHoldings = Array.isArray(holdings) ? holdings : defaultHoldings;
+  const deleted = new Set(deletedTickers.map((ticker) => ticker?.toUpperCase()).filter(Boolean));
   const merged = safeHoldings.map((holding) => {
     const ticker = holding.ticker?.toUpperCase();
     const defaults = defaultHoldings.find((defaultHolding) => defaultHolding.ticker === ticker);
     return defaults ? { ...defaults, ...holding, ticker } : holding;
   });
-  if (!addMissingDefaults) return applyWhtPolicy(merged);
+  if (!repairTickers.length) return applyWhtPolicy(merged);
   const presentTickers = new Set(merged.map((holding) => holding.ticker?.toUpperCase()));
   const usedIds = new Set(merged.map((holding) => holding.id));
-  const missingDefaults = defaultHoldings.filter((holding) => !presentTickers.has(holding.ticker)).map((holding, index) => {
+  const repairSet = new Set(repairTickers.map((ticker) => ticker.toUpperCase()));
+  const missingDefaults = defaultHoldings.filter((holding) => (
+    repairSet.has(holding.ticker) && !presentTickers.has(holding.ticker) && !deleted.has(holding.ticker)
+  )).map((holding, index) => {
     if (!usedIds.has(holding.id)) return { ...holding };
     return { ...holding, id: Date.now() + index };
   });
   return applyWhtPolicy([...merged, ...missingDefaults]);
 };
 
+function repairTickersForSchema(schemaVersion = 0) {
+  if (schemaVersion < 2) return defaultHoldings.map((holding) => holding.ticker);
+  if (schemaVersion < 3) return ["QQQI", "SPYI"];
+  return [];
+}
+
 function readLocalPortfolio(theme) {
   let holdings = defaultHoldings;
   let dividendCache = emptyDividendCache;
+  let deletedTickers = [];
   try { holdings = JSON.parse(localStorage.getItem(STORAGE_KEY)) || defaultHoldings; } catch { /* Use defaults. */ }
   try { dividendCache = JSON.parse(localStorage.getItem(DIVIDEND_CACHE_KEY)) || emptyDividendCache; } catch { /* Use empty cache. */ }
+  try { deletedTickers = JSON.parse(localStorage.getItem(DELETED_TICKERS_STORAGE_KEY)) || []; } catch { /* Use empty deleted ticker list. */ }
   return {
     holdings: normalizeTrackedHoldings(holdings),
     apiKey: localStorage.getItem(API_KEY_STORAGE) || "",
     dividendCache,
+    deletedTickers,
     theme,
   };
 }
@@ -567,6 +581,7 @@ function App() {
   const [calendarFocusDate, setCalendarFocusDate] = useState(null);
   const [apiKey, setApiKey] = useState("");
   const [dividendCache, setDividendCache] = useState(emptyDividendCache);
+  const [deletedTickers, setDeletedTickers] = useState([]);
   const [syncState, setSyncState] = useState({ status: "idle", message: "" });
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(firebaseConfigured);
@@ -578,7 +593,7 @@ function App() {
   });
   const clientIdRef = useRef(getClientId());
   const applyingCloudRef = useRef(false);
-  const latestDataRef = useRef({ holdings, apiKey, dividendCache, theme });
+  const latestDataRef = useRef({ holdings, apiKey, dividendCache, deletedTickers, theme });
 
   useEffect(() => setHoldings((current) => current.some((holding) => holding.whtVersion !== 2) ? applyWhtPolicy(current) : current), []);
   useEffect(() => {
@@ -593,12 +608,15 @@ function App() {
     if (user) localStorage.setItem(DIVIDEND_CACHE_KEY, JSON.stringify(dividendCache));
   }, [dividendCache, user]);
   useEffect(() => {
+    if (user) localStorage.setItem(DELETED_TICKERS_STORAGE_KEY, JSON.stringify(deletedTickers));
+  }, [deletedTickers, user]);
+  useEffect(() => {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
   useEffect(() => {
-    latestDataRef.current = { holdings, apiKey, dividendCache, theme };
-  }, [holdings, apiKey, dividendCache, theme]);
+    latestDataRef.current = { holdings, apiKey, dividendCache, deletedTickers, theme };
+  }, [holdings, apiKey, dividendCache, deletedTickers, theme]);
 
   useEffect(() => observeAuth((currentUser) => {
     setUser(currentUser);
@@ -608,6 +626,7 @@ function App() {
       setHoldings(publicHoldings.map((holding) => ({ ...holding })));
       setApiKey("");
       setDividendCache(emptyDividendCache);
+      setDeletedTickers([]);
       setSyncState({ status: "idle", message: "" });
       setCloudReady(false);
       setCloudState({
@@ -630,15 +649,18 @@ function App() {
         if (firstSnapshot || cloudData.updatedBy !== clientIdRef.current) {
           applyingCloudRef.current = true;
           if (Array.isArray(cloudData.holdings)) {
-            const shouldRepairMissingDefaults = (cloudData.schemaVersion || 0) < CURRENT_SCHEMA_VERSION;
-            const normalizedHoldings = normalizeTrackedHoldings(cloudData.holdings, { addMissingDefaults: shouldRepairMissingDefaults });
+            const cloudDeletedTickers = Array.isArray(cloudData.deletedTickers) ? cloudData.deletedTickers : [];
+            const repairTickers = repairTickersForSchema(cloudData.schemaVersion || 0);
+            const normalizedHoldings = normalizeTrackedHoldings(cloudData.holdings, { repairTickers, deletedTickers: cloudDeletedTickers });
             setHoldings(normalizedHoldings);
-            if (shouldRepairMissingDefaults || JSON.stringify(normalizedHoldings) !== JSON.stringify(applyWhtPolicy(cloudData.holdings))) {
+            setDeletedTickers(cloudDeletedTickers);
+            if (repairTickers.length || JSON.stringify(normalizedHoldings) !== JSON.stringify(applyWhtPolicy(cloudData.holdings))) {
               savePortfolio(user.uid, {
                 ...cloudData,
                 schemaVersion: CURRENT_SCHEMA_VERSION,
                 updatedBy: clientIdRef.current,
                 holdings: normalizedHoldings,
+                deletedTickers: cloudDeletedTickers,
               }).catch((error) => {
                 setCloudState({ status: "error", message: `Cloud repair failed: ${error.message}` });
               });
@@ -653,6 +675,7 @@ function App() {
         setHoldings(localSeed.holdings);
         setApiKey(localSeed.apiKey);
         setDividendCache(localSeed.dividendCache);
+        setDeletedTickers(localSeed.deletedTickers || []);
         setTheme(localSeed.theme);
         savePortfolio(user.uid, {
           schemaVersion: CURRENT_SCHEMA_VERSION,
@@ -685,6 +708,7 @@ function App() {
         holdings,
         apiKey,
         dividendCache,
+        deletedTickers,
         theme,
       }).then(() => {
         setCloudState({ status: "synced", message: "Your portfolio is synced across devices." });
@@ -693,7 +717,7 @@ function App() {
       });
     }, 700);
     return () => window.clearTimeout(timeout);
-  }, [holdings, apiKey, dividendCache, theme, user, cloudReady]);
+  }, [holdings, apiKey, dividendCache, deletedTickers, theme, user, cloudReady]);
 
   const handleSignIn = async () => {
     setAuthError("");
@@ -756,7 +780,13 @@ function App() {
   const totalValue = useMemo(() => holdings.reduce((sum, h) => sum + h.shares * h.price, 0), [holdings]);
   const saveHolding = (holding) => {
     setHoldings((current) => holding.id ? current.map((h) => h.id === holding.id ? holding : h) : [...current, { ...holding, id: Date.now() }]);
+    if (holding.ticker) setDeletedTickers((current) => current.filter((ticker) => ticker !== holding.ticker.toUpperCase()));
     setModal(null);
+  };
+  const deleteHolding = (id) => {
+    const removed = holdings.find((holding) => holding.id === id);
+    if (removed?.ticker) setDeletedTickers((tickers) => Array.from(new Set([...tickers, removed.ticker.toUpperCase()])));
+    setHoldings((current) => current.filter((item) => item.id !== id));
   };
   const openCalendar = (date) => {
     if (date) setCalendarFocusDate(new Date(date));
@@ -781,7 +811,7 @@ function App() {
         <header><div className="mobile-logo"><Logo /></div><div className="header-spacer" /><div className="market-status"><i /> Markets open</div><AuthButton user={user} loading={authLoading} cloudState={cloudState} onSignIn={handleSignIn} onSignOut={handleSignOut} onOpenSettings={() => setView("settings")} /><button className="icon-button theme-toggle" aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`} title={`Switch to ${theme === "light" ? "dark" : "light"} mode`} onClick={() => setTheme((current) => current === "light" ? "dark" : "light")}>{theme === "light" ? <Moon size={19} /> : <Sun size={19} />}</button><button className="icon-button notification"><Bell size={19} /><i /></button><div className="header-value"><span>Total balance</span><strong>{currency.format(totalValue)}</strong></div></header>
         <main>
           {view === "dashboard" && <Dashboard holdings={holdings} dividendEvents={dividendCache.events} onOpenCalendar={openCalendar} onOpenPortfolio={() => setView("portfolio")} onEdit={(h) => setModal(h)} onAdd={() => setModal("new")} user={user} />}
-          {view === "portfolio" && <Portfolio holdings={holdings} onEdit={(h) => setModal(h)} onAdd={() => setModal("new")} onDelete={(id) => setHoldings((h) => h.filter((item) => item.id !== id))} />}
+          {view === "portfolio" && <Portfolio holdings={holdings} onEdit={(h) => setModal(h)} onAdd={() => setModal("new")} onDelete={deleteHolding} />}
           {view === "calendar" && <Calendar holdings={holdings} dividendEvents={dividendCache.events} focusDate={calendarFocusDate} />}
           {view === "settings" && <DataSettings apiKey={apiKey} syncState={syncState} lastSync={dividendCache.fetchedAt} onConnect={connectApi} onSync={() => syncDividendData()} user={user} authLoading={authLoading} cloudState={cloudState} authError={authError} onSignIn={handleSignIn} onSignOut={handleSignOut} />}
         </main>
