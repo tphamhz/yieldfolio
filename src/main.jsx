@@ -64,6 +64,12 @@ const distributionHistory = {
   JEPI: { "2026-05": 0.1424, "2026-06": 0.2150 },
 };
 const declaredDividendSchedule = {
+  QQQI: [
+    { exDate: "2026-07-22", payDate: "2026-07-24", amount: 0.6572 },
+  ],
+  SPYI: [
+    { exDate: "2026-07-22", payDate: "2026-07-24", amount: 0.5310 },
+  ],
   JEPQ: [
     { exDate: "2026-06-11", payDate: "2026-07-08", amount: 0.3021 },
     { exDate: "2026-07-09" },
@@ -288,7 +294,7 @@ function HoldingModal({ holding, onClose, onSave }) {
   );
 }
 
-function Dashboard({ holdings, dividendEvents, setView, onEdit, onAdd, user }) {
+function Dashboard({ holdings, dividendEvents, onOpenCalendar, onOpenPortfolio, onEdit, onAdd, user }) {
   const totalValue = holdings.reduce((sum, h) => sum + h.shares * h.price, 0);
   const totalCost = holdings.reduce((sum, h) => sum + h.shares * h.avgCost, 0);
   const annualGross = holdings.reduce((sum, h) => sum + grossIncome(h), 0);
@@ -299,7 +305,9 @@ function Dashboard({ holdings, dividendEvents, setView, onEdit, onAdd, user }) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const allUpcoming = buildEvents(holdings, dividendEvents).filter((event) => event.payDate >= today).sort((a, b) => a.payDate - b.payDate);
-  const upcoming = allUpcoming.slice(0, 4);
+  const upcoming = holdings.map((holding) => (
+    allUpcoming.find((event) => event.holding.id === holding.id)
+  )).filter(Boolean).sort((a, b) => a.payDate - b.payDate);
   const nextExDividends = holdings.map((holding) => (
     buildEvents([holding], dividendEvents)
       .filter((event) => event.exDate >= today)
@@ -359,11 +367,11 @@ function Dashboard({ holdings, dividendEvents, setView, onEdit, onAdd, user }) {
         <StatCard label="Portfolio value" value={currency.format(totalValue)} detail={<><span className="positive"><ArrowUpRight size={14} /> {((returnAmount / totalCost) * 100 || 0).toFixed(1)}%</span> all time</>} icon={WalletCards} />
         <StatCard label="Projected annual net income" value={currency.format(annualNet)} detail={`Next 12 months · ${currency.format(annualGross)} gross · ${currency.format(annualWht)} WHT`} icon={CircleDollarSign} accent />
         <StatCard label="Net portfolio yield" value={`${yieldOnValue.toFixed(2)}%`} detail={`Gross yield ${totalValue ? (annualGross / totalValue * 100).toFixed(2) : "0.00"}%`} icon={PieChart} />
-        <StatCard label="Next net payout" value={nextPayouts.length ? currency.format(nextPayoutNet) : "$0"} detail={nextPayouts.length ? `${currency.format(nextPayoutGross)} gross · ${nextPayoutTickers} · ${shortDate.format(nextPayouts[0].payDate)}` : "No payout scheduled"} icon={CalendarDays} onClick={() => setView("calendar")} />
+        <StatCard label="Next net payout" value={nextPayouts.length ? currency.format(nextPayoutNet) : "$0"} detail={nextPayouts.length ? `${currency.format(nextPayoutGross)} gross · ${nextPayoutTickers} · ${shortDate.format(nextPayouts[0].payDate)}` : "No payout scheduled"} icon={CalendarDays} onClick={() => onOpenCalendar(nextPayouts[0]?.payDate)} />
       </div>
 
       <section className="panel ex-dividend-panel">
-        <div className="panel-head"><div><div className="eyebrow">Qualification dates</div><h2>Next ex-dividend</h2></div><button className="text-button" onClick={() => setView("calendar")}>View calendar <ChevronRight size={15} /></button></div>
+        <div className="panel-head"><div><div className="eyebrow">Qualification dates</div><h2>Next ex-dividend</h2></div><button type="button" className="text-button" onClick={() => onOpenCalendar(nextExDividends[0]?.exDate)}>View calendar <ChevronRight size={15} /></button></div>
         <div className="ex-dividend-grid">
           {nextExDividends.map((event) => (
             <article className="ex-dividend-card" key={`next-ex-${event.holding.id}`}>
@@ -392,7 +400,7 @@ function Dashboard({ holdings, dividendEvents, setView, onEdit, onAdd, user }) {
         </section>
 
         <section className="panel">
-          <div className="panel-head"><div><div className="eyebrow">On the horizon</div><h2>Upcoming payouts</h2></div><button className="text-button" onClick={() => setView("calendar")}>View calendar <ChevronRight size={15} /></button></div>
+          <div className="panel-head"><div><div className="eyebrow">On the horizon</div><h2>Upcoming payouts</h2></div><button type="button" className="text-button" onClick={() => onOpenCalendar(upcoming[0]?.payDate)}>View calendar <ChevronRight size={15} /></button></div>
           <div className="payout-list">
             {upcoming.map((event) => <div className="payout-row" key={event.id}><div className="date-box"><strong>{event.payDate.getDate()}</strong><span>{event.payDate.toLocaleString("en-US", { month: "short" })}</span></div><Avatar ticker={event.holding.ticker} color={event.holding.color} small /><div className="payout-company"><strong>{event.holding.ticker}</strong><span>{event.holding.whtRate}% WHT · {event.holding.shares} shares</span></div><div className="amount-stack"><strong>{preciseCurrency.format(netIncome(event.amount, event.holding))}</strong><span>{preciseCurrency.format(event.amount)} gross</span></div></div>)}
           </div>
@@ -400,7 +408,7 @@ function Dashboard({ holdings, dividendEvents, setView, onEdit, onAdd, user }) {
       </div>
 
       <section className="panel holdings-panel">
-        <div className="panel-head"><div><div className="eyebrow">Your assets</div><h2>Top holdings</h2></div><button className="text-button" onClick={() => setView("portfolio")}>View portfolio <ChevronRight size={15} /></button></div>
+        <div className="panel-head"><div><div className="eyebrow">Your assets</div><h2>Top holdings</h2></div><button type="button" className="text-button" onClick={onOpenPortfolio}>View portfolio <ChevronRight size={15} /></button></div>
         <div className="holding-table">
           <div className="table-row table-header"><span>Holding</span><span>Shares</span><span>Market value</span><span>Annual income</span><span>Yield</span><span /></div>
           {holdings.slice(0, 5).map((h) => {
@@ -436,8 +444,11 @@ function Portfolio({ holdings, onEdit, onAdd, onDelete }) {
   );
 }
 
-function Calendar({ holdings, dividendEvents }) {
-  const [cursor, setCursor] = useState(new Date("2026-09-01T12:00:00"));
+function Calendar({ holdings, dividendEvents, focusDate }) {
+  const [cursor, setCursor] = useState(() => focusDate || new Date());
+  useEffect(() => {
+    if (focusDate) setCursor(focusDate);
+  }, [focusDate]);
   const events = buildEvents(holdings, dividendEvents);
   const year = cursor.getFullYear();
   const month = cursor.getMonth();
@@ -536,6 +547,7 @@ function App() {
   const [localSeed] = useState(() => readLocalPortfolio(theme));
   const [holdings, setHoldings] = useState(() => publicHoldings.map((holding) => ({ ...holding })));
   const [modal, setModal] = useState(null);
+  const [calendarFocusDate, setCalendarFocusDate] = useState(null);
   const [apiKey, setApiKey] = useState("");
   const [dividendCache, setDividendCache] = useState(emptyDividendCache);
   const [syncState, setSyncState] = useState({ status: "idle", message: "" });
@@ -715,6 +727,10 @@ function App() {
     setHoldings((current) => holding.id ? current.map((h) => h.id === holding.id ? holding : h) : [...current, { ...holding, id: Date.now() }]);
     setModal(null);
   };
+  const openCalendar = (date) => {
+    if (date) setCalendarFocusDate(new Date(date));
+    setView("calendar");
+  };
   const nav = [
     ["dashboard", LayoutDashboard, "Overview"],
     ["portfolio", WalletCards, "Portfolio"],
@@ -733,9 +749,9 @@ function App() {
       <div className="main-area">
         <header><div className="mobile-logo"><Logo /></div><div className="header-spacer" /><div className="market-status"><i /> Markets open</div><AuthButton user={user} loading={authLoading} cloudState={cloudState} onSignIn={handleSignIn} onSignOut={handleSignOut} onOpenSettings={() => setView("settings")} /><button className="icon-button theme-toggle" aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`} title={`Switch to ${theme === "light" ? "dark" : "light"} mode`} onClick={() => setTheme((current) => current === "light" ? "dark" : "light")}>{theme === "light" ? <Moon size={19} /> : <Sun size={19} />}</button><button className="icon-button notification"><Bell size={19} /><i /></button><div className="header-value"><span>Total balance</span><strong>{currency.format(totalValue)}</strong></div></header>
         <main>
-          {view === "dashboard" && <Dashboard holdings={holdings} dividendEvents={dividendCache.events} setView={setView} onEdit={(h) => setModal(h)} onAdd={() => setModal("new")} user={user} />}
+          {view === "dashboard" && <Dashboard holdings={holdings} dividendEvents={dividendCache.events} onOpenCalendar={openCalendar} onOpenPortfolio={() => setView("portfolio")} onEdit={(h) => setModal(h)} onAdd={() => setModal("new")} user={user} />}
           {view === "portfolio" && <Portfolio holdings={holdings} onEdit={(h) => setModal(h)} onAdd={() => setModal("new")} onDelete={(id) => setHoldings((h) => h.filter((item) => item.id !== id))} />}
-          {view === "calendar" && <Calendar holdings={holdings} dividendEvents={dividendCache.events} />}
+          {view === "calendar" && <Calendar holdings={holdings} dividendEvents={dividendCache.events} focusDate={calendarFocusDate} />}
           {view === "settings" && <DataSettings apiKey={apiKey} syncState={syncState} lastSync={dividendCache.fetchedAt} onConnect={connectApi} onSync={() => syncDividendData()} user={user} authLoading={authLoading} cloudState={cloudState} authError={authError} onSignIn={handleSignIn} onSignOut={handleSignOut} />}
         </main>
       </div>
