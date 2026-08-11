@@ -147,6 +147,21 @@ const applyWhtPolicy = (holdings) => holdings.map((holding) => ({
     : (holding.name?.includes("UCITS ETF · LSE") ? 15 : (holding.whtRate ?? (["QQQI", "SPYI"].includes(holding.ticker) ? 30 : 0))),
   whtVersion: 2,
 }));
+const normalizeTrackedHoldings = (holdings = defaultHoldings) => {
+  const safeHoldings = Array.isArray(holdings) ? holdings : defaultHoldings;
+  const merged = safeHoldings.map((holding) => {
+    const ticker = holding.ticker?.toUpperCase();
+    const defaults = defaultHoldings.find((defaultHolding) => defaultHolding.ticker === ticker);
+    return defaults ? { ...defaults, ...holding, ticker } : holding;
+  });
+  const presentTickers = new Set(merged.map((holding) => holding.ticker?.toUpperCase()));
+  const usedIds = new Set(merged.map((holding) => holding.id));
+  const missingDefaults = defaultHoldings.filter((holding) => !presentTickers.has(holding.ticker)).map((holding, index) => {
+    if (!usedIds.has(holding.id)) return { ...holding };
+    return { ...holding, id: Date.now() + index };
+  });
+  return applyWhtPolicy([...merged, ...missingDefaults]);
+};
 
 function readLocalPortfolio(theme) {
   let holdings = defaultHoldings;
@@ -154,7 +169,7 @@ function readLocalPortfolio(theme) {
   try { holdings = JSON.parse(localStorage.getItem(STORAGE_KEY)) || defaultHoldings; } catch { /* Use defaults. */ }
   try { dividendCache = JSON.parse(localStorage.getItem(DIVIDEND_CACHE_KEY)) || emptyDividendCache; } catch { /* Use empty cache. */ }
   return {
-    holdings: applyWhtPolicy(holdings),
+    holdings: normalizeTrackedHoldings(holdings),
     apiKey: localStorage.getItem(API_KEY_STORAGE) || "",
     dividendCache,
     theme,
@@ -612,7 +627,20 @@ function App() {
         const cloudData = snapshot.data();
         if (firstSnapshot || cloudData.updatedBy !== clientIdRef.current) {
           applyingCloudRef.current = true;
-          if (Array.isArray(cloudData.holdings)) setHoldings(applyWhtPolicy(cloudData.holdings));
+          if (Array.isArray(cloudData.holdings)) {
+            const normalizedHoldings = normalizeTrackedHoldings(cloudData.holdings);
+            setHoldings(normalizedHoldings);
+            if (JSON.stringify(normalizedHoldings) !== JSON.stringify(applyWhtPolicy(cloudData.holdings))) {
+              savePortfolio(user.uid, {
+                ...cloudData,
+                schemaVersion: 1,
+                updatedBy: clientIdRef.current,
+                holdings: normalizedHoldings,
+              }).catch((error) => {
+                setCloudState({ status: "error", message: `Cloud repair failed: ${error.message}` });
+              });
+            }
+          }
           if (typeof cloudData.apiKey === "string") setApiKey(cloudData.apiKey);
           if (cloudData.dividendCache?.events) setDividendCache(cloudData.dividendCache);
           if (cloudData.theme === "light" || cloudData.theme === "dark") setTheme(cloudData.theme);
