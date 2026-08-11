@@ -55,6 +55,7 @@ const API_KEY_STORAGE = "yieldfolio-alpha-vantage-api-key";
 const DIVIDEND_CACHE_KEY = "yieldfolio-dividend-cache";
 const THEME_STORAGE_KEY = "yieldfolio-theme";
 const CLIENT_ID_STORAGE_KEY = "yieldfolio-client-id";
+const CURRENT_SCHEMA_VERSION = 2;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const providerSymbols = { QQQI: "QQQI", SPYI: "SPYI", JEPQ: "JEPQ.LON", JEPI: "JEPI.LON" };
 const distributionHistory = {
@@ -147,13 +148,14 @@ const applyWhtPolicy = (holdings) => holdings.map((holding) => ({
     : (holding.name?.includes("UCITS ETF · LSE") ? 15 : (holding.whtRate ?? (["QQQI", "SPYI"].includes(holding.ticker) ? 30 : 0))),
   whtVersion: 2,
 }));
-const normalizeTrackedHoldings = (holdings = defaultHoldings) => {
+const normalizeTrackedHoldings = (holdings = defaultHoldings, { addMissingDefaults = false } = {}) => {
   const safeHoldings = Array.isArray(holdings) ? holdings : defaultHoldings;
   const merged = safeHoldings.map((holding) => {
     const ticker = holding.ticker?.toUpperCase();
     const defaults = defaultHoldings.find((defaultHolding) => defaultHolding.ticker === ticker);
     return defaults ? { ...defaults, ...holding, ticker } : holding;
   });
+  if (!addMissingDefaults) return applyWhtPolicy(merged);
   const presentTickers = new Set(merged.map((holding) => holding.ticker?.toUpperCase()));
   const usedIds = new Set(merged.map((holding) => holding.id));
   const missingDefaults = defaultHoldings.filter((holding) => !presentTickers.has(holding.ticker)).map((holding, index) => {
@@ -628,12 +630,13 @@ function App() {
         if (firstSnapshot || cloudData.updatedBy !== clientIdRef.current) {
           applyingCloudRef.current = true;
           if (Array.isArray(cloudData.holdings)) {
-            const normalizedHoldings = normalizeTrackedHoldings(cloudData.holdings);
+            const shouldRepairMissingDefaults = (cloudData.schemaVersion || 0) < CURRENT_SCHEMA_VERSION;
+            const normalizedHoldings = normalizeTrackedHoldings(cloudData.holdings, { addMissingDefaults: shouldRepairMissingDefaults });
             setHoldings(normalizedHoldings);
-            if (JSON.stringify(normalizedHoldings) !== JSON.stringify(applyWhtPolicy(cloudData.holdings))) {
+            if (shouldRepairMissingDefaults || JSON.stringify(normalizedHoldings) !== JSON.stringify(applyWhtPolicy(cloudData.holdings))) {
               savePortfolio(user.uid, {
                 ...cloudData,
-                schemaVersion: 1,
+                schemaVersion: CURRENT_SCHEMA_VERSION,
                 updatedBy: clientIdRef.current,
                 holdings: normalizedHoldings,
               }).catch((error) => {
@@ -652,7 +655,7 @@ function App() {
         setDividendCache(localSeed.dividendCache);
         setTheme(localSeed.theme);
         savePortfolio(user.uid, {
-          schemaVersion: 1,
+          schemaVersion: CURRENT_SCHEMA_VERSION,
           updatedBy: clientIdRef.current,
           ...localSeed,
         }).catch((error) => {
@@ -677,7 +680,7 @@ function App() {
     setCloudState({ status: "syncing", message: "Saving changes securely…" });
     const timeout = window.setTimeout(() => {
       savePortfolio(user.uid, {
-        schemaVersion: 1,
+        schemaVersion: CURRENT_SCHEMA_VERSION,
         updatedBy: clientIdRef.current,
         holdings,
         apiKey,
